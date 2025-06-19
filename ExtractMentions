@@ -1,0 +1,58 @@
+import * as coda from "@codahq/packs-sdk";
+import {ParamValues} from "@codahq/packs-sdk";
+
+export const pack = coda.newPack();
+
+pack.addFormula({
+  name: 'refresh',
+    description: 'Will refresh dependencies',
+    parameters: [
+        coda.makeParameter({
+            type: coda.ParameterType.String,
+            name: "name",
+            description: "The name you would like to say hello to.",
+        }),
+    ],
+    resultType: coda.ValueType.String, // todo
+    execute([name], context): string {
+      console.log('****', {context});
+      return `Hello, ${name}!`;
+    }
+})
+
+
+pack.addFormula({
+    name: "ExtractMentions",
+    description: "Извлекает docId и pageId из @mentions в Canvas-блоке",
+    parameters: [
+        coda.makeParameter({
+            // @ts-ignore
+            type: coda.ValueType.String,
+            name: "canvasText",
+            description: "Canvas-блок как HTML или rich text",
+        }),
+    ],
+    resultType: coda.ValueType.Array,
+    items: coda.makeObjectSchema({
+        properties: {
+            docId: { type: coda.ValueType.String },
+            pageId: { type: coda.ValueType.String },
+            fullUrl: { type: coda.ValueType.String },
+        },
+        displayProperty: "fullUrl",
+    }),
+    execute: async function ([canvasText], context) {
+        const mentionRegex = /https:\/\/coda\.io\/d\/[^\/]+\/_d([a-zA-Z0-9]+)\/p([a-zA-Z0-9]+)/g;
+
+        // @ts-ignore
+        const matches = [...canvasText.matchAll(mentionRegex)];
+
+        const results = matches.map(match => ({
+            docId: match[1],
+            pageId: match[2],
+            fullUrl: match[0],
+        }));
+
+        return results;
+    },
+});
