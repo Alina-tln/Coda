@@ -1,0 +1,177 @@
+import * as coda from "@codahq/packs-sdk";
+import {ParamValues} from "@codahq/packs-sdk"; // Это может не понадобиться, но можно оставить
+
+export const pack = coda.newPack();
+
+pack.addFormula({
+    name: "ExtractMentions",
+    description: "Извлекает DocId, PageId, RowId, имя пользователя и URL из упоминаний в Canvas-блоке (HTML).",
+    parameters: [
+        coda.makeParameter({
+            type: coda.ParameterType.String,
+            name: "canvasHtml",
+            description: "Canvas-блок в виде HTML.",
+            codaType: coda.ValueHintType.Html, // Подсказка, что это HTML
+        }),
+    ],
+    resultType: coda.ValueType.Array,
+    items: coda.makeObjectSchema({
+        properties: {
+            type: { type: coda.ValueType.String, description: "Тип упоминания: 'doc' (документ/страница), 'row' (строка) или 'person' (человек)." },
+            id: { type: coda.ValueType.String, description: "Уникальный идентификатор упоминания (например, DocId_PageId, RowId, Email)." },
+            
+            // Для упоминаний документов/страниц/строк
+            codaUrl: { // Это будет полный URL к документу/странице/строке
+                type: coda.ValueType.String,
+                codaType: coda.ValueHintType.Url,
+                description: "Полный URL упоминания Coda."
+            },
+            docOrPageId: { type: coda.ValueType.String, description: "DocId или PageId из URL Coda (первый сегмент после /d/)." },
+            rowId: { type: coda.ValueType.String, description: "ID строки, если это упоминание строки." },
+            
+            // Для упоминаний людей
+            personEmail: { 
+                type: coda.ValueType.String, 
+                codaType: coda.ValueHintType.Email, 
+                description: "Email упомянутого человека." 
+            },
+            personName: { type: coda.ValueType.String, description: "Имя упомянутого человека." },
+
+            // Общие свойства
+            displayText: { type: coda.ValueType.String, description: "Текст, отображаемый в упоминании." },
+            rawMatch: { type: coda.ValueType.String, description: "Полный HTML-фрагмент, соответствующий совпадению." },
+        },
+        displayProperty: "id", // Что будет видно по умолчанию
+    }),
+    execute: async function ([canvasHtml], context) {
+        console.log("--- DEBUG START: ExtractMentions (HTML Input) ---");
+        console.log("1. Received canvasHtml (raw):", canvasHtml);
+        console.log("2. Type of canvasHtml:", typeof canvasHtml);
+
+        const textToSearch = String(canvasHtml || ""); // Убедимся, что это строка
+        console.log("3. textToSearch (after String conversion):", textToSearch);
+
+        const uniqueMentions = new Map<string, any>(); // Используем Map для уникальности по ID
+
+        // --- 1. Регулярное выражение для упоминаний строк/документов (Coda URL в <a>) ---
+        // Пример: <a href="https://coda.io/d/_dwr_BW4gfUd#WikiAllDocuments_tuGXU/r49&view=modal">ValueProposition</a>
+        // Группы: 1: Полный URL из href, 2: _dwr_BW4gfUd (Doc/Page ID), 3: 49 (Row ID), 4: ValueProposition (displayText)
+        const codaMentionRegex = /<a[^>]*?href=["'](https:\/\/coda\.io\/d\/([^\/#]+)(?:#.*?\/r([0-9]+))?[^"']*?)["'][^>]*?>(.+?)<\/a>/g;
+
+        // --- 2. Регулярное выражение для упоминаний людей (mailto: в <a>) ---
+        // Пример: <a href="mailto:a.g.kolesova@gmail.com">Alina Ivanova</a>
+        // Группы: 1: a.g.kolesova@gmail.com (Email), 2: Alina Ivanova (Name)
+        const personMentionRegex = /<a[^>]*?href=["']mailto:([^"']+?)["'][^>]*?>(.+?)<\/a>/g;
+
+        let match;
+
+        // --- Парсинг упоминаний Coda (документы/страницы/строки) ---
+        console.log("4. Searching for Coda Mentions (HTML):", codaMentionRegex.source);
+        while ((match = codaMentionRegex.exec(textToSearch)) !== null) {
+            const fullUrl = match[1];
+            const docOrPageId = match[2]; // Это часть ID после /d/
+            const rowId = match[3];       // Может быть undefined, если нет /r[0-9]+
+            const displayText = match[4];
+            const rawMatch = match[0];
+
+            let type = 'doc'; // По умолчанию считаем документом/страницей
+            let idKey = docOrPageId;
+
+            if (rowId) {
+                type = 'row';
+                idKey = `${docOrPageId}_${rowId}`; // Уникальность по Doc/Page ID + Row ID
+            } else {
+                idKey = docOrPageId; // Для документов/страниц
+            }
+            
+            // Если текст ссылки содержит '@', это, скорее всего, Row Mention по тексту
+            // Но мы уже определили type='row' по наличию rowId, так что эта проверка не нужна,
+            // но полезно помнить о разнообразии
+            // if (displayText.startsWith('@')) { type = 'row'; }
+
+
+            if (!uniqueMentions.has(idKey)) {
+                uniqueMentions.set(idKey, {
+                    type: type,
+                    id: idKey, // Используем idKey как общий идентификатор
+                    codaUrl: fullUrl,
+                    docOrPageId: docOrPageId,
+                    rowId: rowId || undefined, // undefined, если нет
+                    displayText: displayText,
+                    rawMatch: rawMatch,
+                    // Поля для человека будут undefined
+                    personEmail: undefined,
+                    personName: undefined,
+                });
+                console.log(`5. Found Coda mention (${type}): ${displayText} (URL: ${fullUrl})`);
+            }
+        }
+
+        // --- Парсинг упоминаний людей (mailto) ---
+        console.log("6. Searching for Person Mentions (HTML):", personMentionRegex.source);
+        while ((match = personMentionRegex.exec(textToSearch)) !== null) {
+            const personEmail = match[1];
+            const personName = match[2];
+            const rawMatch = match[0];
+
+            const idKey = `person_${personEmail}`; // Уникальность по email
+            if (!uniqueMentions.has(idKey)) {
+                uniqueMentions.set(idKey, {
+                    type: "person",
+                    id: idKey, // Используем email как ID
+                    personEmail: personEmail,
+                    personName: personName,
+                    displayText: personName, // Отображаемый текст - это имя
+                    rawMatch: rawMatch,
+                    // Поля для Coda-упоминаний будут undefined
+                    codaUrl: undefined,
+                    docOrPageId: undefined,
+                    rowId: undefined,
+                });
+                console.log(`7. Found Person mention: ${personName} (Email: ${personEmail})`);
+            }
+        }
+
+        const results = Array.from(uniqueMentions.values());
+        console.log("8. Final results:", results);
+        console.log("--- DEBUG END: ExtractMentions (HTML Input) ---");
+
+        return results;
+    },
+});
+
+// Отладочная функция GetCanvasHtmlDebug (ее можно оставить, она помогла получить HTML)
+pack.addFormula({
+    name: "GetCanvasHtmlDebug",
+    description: "Возвращает HTML-содержимое Canvas-блока для отладки.",
+    parameters: [
+        coda.makeParameter({
+            type: coda.ParameterType.String,
+            codaType: coda.ValueHintType.Html,
+            name: "canvasBlock",
+            description: "Canvas-блок, из которого нужно получить HTML.",
+        }),
+    ],
+    resultType: coda.ValueType.String,
+    execute: async function ([canvasContent], context) {
+        return String(canvasContent || "");
+    },
+});
+
+// Ваша формула refresh
+pack.addFormula({
+    name: 'refresh',
+    description: 'Will refresh dependencies',
+    parameters: [
+        coda.makeParameter({
+            type: coda.ParameterType.String,
+            name: "inputName",
+            description: "The name you would like to say hello to.",
+        }),
+    ],
+    resultType: coda.ValueType.String,
+    execute([inputName], context): string {
+      console.log('****', {context});
+      return `Hello, ${inputName}!`;
+    }
+});
