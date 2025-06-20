@@ -1,0 +1,42 @@
+pack.addFormula({
+  name: "ExtractMentions",
+  description: "Извлекает docId и pageId из @mentions в Canvas-блоке",
+  parameters: [
+    coda.makeParameter({
+      type: coda.ParameterType.String,
+      codaType: coda.ValueHintType.Html,
+      name: "canvasHtml",
+      description: "Canvas-блок в виде HTML",
+    }),
+  ],
+  resultType: coda.ValueType.Array,
+  items: coda.makeObjectSchema({
+    properties: {
+      docId: { type: coda.ValueType.String },
+      pageId: { type: coda.ValueType.String },
+      fullUrl: {
+        type: coda.ValueType.String,
+        codaType: coda.ValueHintType.Url, // ✅ рендерится как ссылка
+      },
+    },
+    displayProperty: "fullUrl", // что будет видно в таблице
+  }),
+  execute: async function ([canvasText], context) {
+    const regex = /https:\/\/coda\.io\/d\/[^\/]+_([a-zA-Z0-9]+)\/[^#]+#(?:[^_]+_)?([a-zA-Z0-9\-]+)(?:\/r[0-9]+)?/g;
+
+    const matches: RegExpExecArray[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(canvasText)) !== null) {
+      matches.push(match);
+    }
+
+return canvasText;
+
+    //return matches.map(m => ({
+      //docId: m[1],
+      //pageId: m[2],
+      //fullUrl: m[0],
+    //}));
+  
+  },
+});
