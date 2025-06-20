@@ -1,0 +1,147 @@
+import * as coda from "@codahq/packs-sdk";
+
+export const pack = coda.newPack();
+
+// --- 1. Определение схемы для строк таблицы "Wiki Все документы" ---
+const WikiAllDocumentsSchema = coda.makeObjectSchema({
+    properties: {
+        ID: { type: coda.ValueType.Number, description: "Уникальный ID документа/строки." },
+        Title: { type: coda.ValueType.String, description: "Название документа/строки." },
+        LinkToArticle: { type: coda.ValueType.String, codaType: coda.ValueHintType.Url, description: "Ссылка на статью." },
+        ArticleContent: { type: coda.ValueType.String, codaType: coda.ValueHintType.Html, description: "Содержимое статьи Canvas." },
+        Notes: { type: coda.ValueType.String, description: "Примечания." },
+        LastModified: { type: coda.ValueType.String, codaType: coda.ValueHintType.DateTime, description: "Дата и время последнего изменения." },
+        Author: { type: coda.ValueType.String, description: "Автор." },
+        CreatedDate: { type: coda.ValueType.String, codaType: coda.ValueHintType.DateTime, description: "Дата и время создания." },
+        Category: { type: coda.ValueType.String, description: "Категория документа." },
+        ModifiedBy: { type: coda.ValueType.String, description: "Кем изменено." },
+        Parent: { type: coda.ValueType.String, description: "Родительский элемент." },
+        Subitems: { type: coda.ValueType.String, description: "Вложенные элементы (список)." },
+        DependsOn: { type: coda.ValueType.String, description: "Зависимости (текстовое представление)." },
+        ReverseDependency: { type: coda.ValueType.String, description: "Обратные зависимости." },
+        CanvasForButtons: { type: coda.ValueType.String, description: "Содержимое Canvas для кнопок." },
+        CanvasForCallout: { type: coda.ValueType.String, description: "Содержимое Canvas для выноски." },
+    },
+    displayProperty: "Title",
+    idProperty: "ID",
+});
+
+pack.addFormula({
+    name: "ExtractMentions",
+    description: "Извлекает объекты документов и строк из упоминаний в Canvas-блоке (HTML).",
+    parameters: [
+        coda.makeParameter({
+            type: coda.ParameterType.String,
+            name: "canvasHtml",
+            description: "Canvas-блок в виде HTML.",
+            codaType: coda.ValueHintType.Html,
+        }),
+        coda.makeParameter({
+            type: coda.ParameterType.String, // Тип String, как мы выяснили из ошибок сборки
+            name: "sourceTable",
+            description: "Таблица 'Wiki Все документы' для поиска упоминаний.",
+            // ИСПРАВЛЕНИЕ: Удалена строка `codaType: coda.ValueHintType.Table,`
+            // так как она вызывает ошибку "Property 'Table' does not exist on type 'typeof ValueHintType'."
+        }),
+    ],
+    resultType: coda.ValueType.Array,
+    items: WikiAllDocumentsSchema,
+    execute: async function ([canvasHtml, sourceTableId], context) { // Параметр 'sourceTableId' снова в аргументах
+        console.log("--- DEBUG START: ExtractMentions (HTML Input) ---");
+        console.log("1. Received canvasHtml (raw):", canvasHtml);
+
+        const textToSearch = String(canvasHtml || "");
+        console.log("3. textToSearch (after String conversion):", textToSearch);
+
+        const uniqueMentions = new Map<string, any>(); 
+
+        const codaMentionRegex = /<a[^>]*?href=["'](https:\/\/coda\.io\/d\/([^\/#]+)(?:#.*?\/r([0-9]+))?[^"']*?)["'][^>]*?>(.+?)<\/a>/g;
+        
+        let match;
+
+        // --- Получение всех строк из целевой таблицы ---
+        console.log("4. Fetching all rows from sourceTable...");
+        const tableObj = context.schema.getTable(sourceTableId); 
+        
+        if (!tableObj) {
+            throw new Error(`Table with ID/name "${sourceTableId}" not found in this document. Please ensure the table ID/name is correct and accessible.`);
+        }
+
+        const allTargetRows = await context.doc.getRows({table: tableObj});
+        console.log(`5. Fetched ${allTargetRows.length} rows from sourceTable.`);
+
+        // --- Парсинг упоминаний Coda (документы/страницы/строки) ---
+        console.log("6. Searching for Coda Mentions (HTML):", codaMentionRegex.source);
+        while ((match = codaMentionRegex.exec(textToSearch)) !== null) {
+            let fullUrl = match[1];
+            fullUrl = fullUrl.replace(/&amp;/g, '&');
+            fullUrl = fullUrl.split('&')[0];
+            
+            const docOrPageId = match[2];
+            const rowId = match[3];
+            const displayText = match[4];
+            const rawMatch = match[0];
+
+            let type = 'doc';
+            let idKey = docOrPageId;
+
+            if (rowId) {
+                type = 'row';
+                idKey = `${docOrPageId}_${rowId}`;
+            } else {
+                idKey = docOrPageId;
+            }
+            
+            if (!uniqueMentions.has(idKey)) {
+                let foundRow = allTargetRows.find(row => row.Title === displayText);
+               
+                if (foundRow) {
+                    uniqueMentions.set(idKey, foundRow);
+                    console.log(`7. Found and added row object for: ${displayText}`);
+                } else {
+                    console.log(`7. No matching row found in sourceTable for: ${displayText} (ID: ${idKey})`);
+                }
+            }
+        }
+
+        const results = Array.from(uniqueMentions.values());
+        console.log("8. Final results:", results);
+        console.log("--- DEBUG END: ExtractMentions (HTML Input) ---");
+
+        return results;
+    },
+});
+
+pack.addFormula({
+    name: "GetCanvasHtmlDebug",
+    description: "Возвращает HTML-содержимое Canvas-блока для отладки.",
+    parameters: [
+        coda.makeParameter({
+            type: coda.ParameterType.String,
+            codaType: coda.ValueHintType.Html,
+            name: "canvasBlock",
+            description: "Canvas-блок, из которого нужно получить HTML.",
+        }),
+    ],
+    resultType: coda.ValueType.String,
+    execute: async function ([canvasContent], context) {
+        return String(canvasContent || "");
+    },
+});
+
+pack.addFormula({
+    name: 'refresh',
+    description: 'Will refresh dependencies',
+    parameters: [
+        coda.makeParameter({
+            type: coda.ParameterType.String,
+            name: "inputName",
+            description: "The name you would like to say hello to.",
+        }),
+    ],
+    resultType: coda.ValueType.String,
+    execute([inputName], context): string {
+      console.log('****', {context});
+      return `Hello, ${inputName}!`;
+    }
+});
