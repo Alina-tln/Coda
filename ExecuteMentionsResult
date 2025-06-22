@@ -1,5 +1,4 @@
 import * as coda from "@codahq/packs-sdk";
-import {ParamValues} from "@codahq/packs-sdk"; // Это может не понадобиться, но можно оставить
 
 export const pack = coda.newPack();
 
@@ -21,10 +20,10 @@ pack.addFormula({
             id: { type: coda.ValueType.String, description: "Уникальный идентификатор упоминания (например, DocId_PageId, RowId, Email)." },
             
             // Для упоминаний документов/страниц/строк
-            codaUrl: { // Это будет полный URL к документу/странице/строке
-                type: coda.ValueType.String,
-                codaType: coda.ValueHintType.Url,
-                description: "Полный URL упоминания Coda."
+            codaUrl: { 
+                type: coda.ValueType.String, 
+                codaType: coda.ValueHintType.Url, 
+                description: "Полный URL упоминания Coda." 
             },
             docOrPageId: { type: coda.ValueType.String, description: "DocId или PageId из URL Coda (первый сегмент после /d/)." },
             rowId: { type: coda.ValueType.String, description: "ID строки, если это упоминание строки." },
@@ -54,12 +53,12 @@ pack.addFormula({
         const uniqueMentions = new Map<string, any>(); // Используем Map для уникальности по ID
 
         // --- 1. Регулярное выражение для упоминаний строк/документов (Coda URL в <a>) ---
-        // Пример: <a href="https://coda.io/d/_dwr_BW4gfUd#WikiAllDocuments_tuGXU/r49&view=modal">ValueProposition</a>
+        // Пример HTML: <a href="https://coda.io/d/_dwr_BW4gfUd#WikiAllDocuments_tuGxU/r49&amp;view=modal">ValueProposition</a>
         // Группы: 1: Полный URL из href, 2: _dwr_BW4gfUd (Doc/Page ID), 3: 49 (Row ID), 4: ValueProposition (displayText)
         const codaMentionRegex = /<a[^>]*?href=["'](https:\/\/coda\.io\/d\/([^\/#]+)(?:#.*?\/r([0-9]+))?[^"']*?)["'][^>]*?>(.+?)<\/a>/g;
 
         // --- 2. Регулярное выражение для упоминаний людей (mailto: в <a>) ---
-        // Пример: <a href="mailto:a.g.kolesova@gmail.com">Alina Ivanova</a>
+        // Пример HTML: <a href="mailto:a.g.kolesova@gmail.com">Alina Ivanova</a>
         // Группы: 1: a.g.kolesova@gmail.com (Email), 2: Alina Ivanova (Name)
         const personMentionRegex = /<a[^>]*?href=["']mailto:([^"']+?)["'][^>]*?>(.+?)<\/a>/g;
 
@@ -68,9 +67,15 @@ pack.addFormula({
         // --- Парсинг упоминаний Coda (документы/страницы/строки) ---
         console.log("4. Searching for Coda Mentions (HTML):", codaMentionRegex.source);
         while ((match = codaMentionRegex.exec(textToSearch)) !== null) {
-            const fullUrl = match[1];
-            const docOrPageId = match[2]; // Это часть ID после /d/
+            let fullUrl = match[1];
+            
+            // Разэкранируем HTML-сущности в URL и обрезаем параметры (например, &view=modal)
+            fullUrl = fullUrl.replace(/&amp;/g, '&'); // Заменяем '&amp;' на '&'
+            fullUrl = fullUrl.split('&')[0]; // Обрезаем всё после первого '&'
+
+            const docOrPageId = match[2]; // Извлекается из оригинального (необрезанного) URL
             const rowId = match[3];       // Может быть undefined, если нет /r[0-9]+
+
             const displayText = match[4];
             const rawMatch = match[0];
 
@@ -84,17 +89,11 @@ pack.addFormula({
                 idKey = docOrPageId; // Для документов/страниц
             }
             
-            // Если текст ссылки содержит '@', это, скорее всего, Row Mention по тексту
-            // Но мы уже определили type='row' по наличию rowId, так что эта проверка не нужна,
-            // но полезно помнить о разнообразии
-            // if (displayText.startsWith('@')) { type = 'row'; }
-
-
             if (!uniqueMentions.has(idKey)) {
                 uniqueMentions.set(idKey, {
                     type: type,
                     id: idKey, // Используем idKey как общий идентификатор
-                    codaUrl: fullUrl,
+                    codaUrl: fullUrl, // Теперь это правильный, разэкранированный и укороченный URL
                     docOrPageId: docOrPageId,
                     rowId: rowId || undefined, // undefined, если нет
                     displayText: displayText,
@@ -140,7 +139,8 @@ pack.addFormula({
     },
 });
 
-// Отладочная функция GetCanvasHtmlDebug (ее можно оставить, она помогла получить HTML)
+// Отладочная функция GetCanvasHtmlDebug - возвращает сырой HTML Canvas-блока.
+// Помогла нам получить HTML для отладки. Можно оставить для будущих нужд.
 pack.addFormula({
     name: "GetCanvasHtmlDebug",
     description: "Возвращает HTML-содержимое Canvas-блока для отладки.",
@@ -158,7 +158,7 @@ pack.addFormula({
     },
 });
 
-// Ваша формула refresh
+// Ваша формула refresh - остается без изменений.
 pack.addFormula({
     name: 'refresh',
     description: 'Will refresh dependencies',
